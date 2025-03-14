@@ -387,6 +387,13 @@ void commPrintBanner(Comm* c)
     if (commIsMaster(c)) {
       printf(BANNER "\n");
       printf("MPI parallel using %d ranks\n", c->size);
+#ifdef _OPENMP
+#pragma omp parallel
+      {
+#pragma omp single
+        printf("OpenMP enabled using %d threads\n", omp_get_num_threads());
+      }
+#endif
     }
     commBarrier();
     for (int i = 0; i < size; i++) {
@@ -396,14 +403,11 @@ void commPrintBanner(Comm* c)
             host,
             master_pid);
       }
+
+#ifdef VERBOSE_AFFINITY
 #ifdef _OPENMP
 #pragma omp parallel
       {
-#pragma omp single
-        printf("OpenMP enabled using %d threads\n", omp_get_num_threads());
-#pragma omp barrier
-
-#ifdef VERBOSE_AFFINITY
 #pragma omp critical
         {
           printf("Rank %d Thread %d running on Node %s core %d with pid %d "
