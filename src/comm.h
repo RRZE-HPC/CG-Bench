@@ -47,6 +47,7 @@ typedef struct {
   CG_FLOAT* sendBuffer;
 #endif
 } Comm;
+void localizeColumns(Comm* c, MmMatrix* mLocal);
 
 extern void commInit(Comm* c, int argc, char** argv);
 extern void commFinalize(Comm* c);

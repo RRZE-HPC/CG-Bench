@@ -269,7 +269,7 @@ void matrixConvertMMtoCRS(MmMatrix* mm, Matrix* m, int rank, int size)
 
   for (int i = 0; i < mm->count; i++) {
     int local_row = entries[i].row - startRow;
-    CHECK_NEGATIVE(1, local_row);
+    CHECK_NEGATIVE(DBG_DEV, local_row);
     valsPerRow[local_row]++;
   }
 

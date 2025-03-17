@@ -29,7 +29,7 @@ void validateCRSMat(Solver* s, Comm* c){
 
   printf("On rank %i\n", c->rank);
   printf("rowPtr = [");
-  for(int row = 0; row < s->A.nr; ++row){
+  for(int row = 0; row < s->A.nr + 1; ++row){
     printf("%i, ", s->A.rowPtr[row]);
   }
   printf("]\n");
@@ -118,11 +118,15 @@ void initSolver(Solver* s, Comm* c, Parameter* p)
     // commMMMatrixDump(c, &mLocal);
     // commAbort("Exit after Distribute");
 
+    
+    localizeColumns(c, &mLocal);
+
     matrixConvertMMtoCRS(&mLocal, &s->A, c->rank, c->size);
   }
 
 #ifdef VALIDATE
   // Check that local CRS matrices are as expected
+  MPI_Barrier(MPI_COMM_WORLD);
   validateCRSMat(s, c);
   MPI_Barrier(MPI_COMM_WORLD);
   exit(EXIT_SUCCESS);

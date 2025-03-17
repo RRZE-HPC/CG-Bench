@@ -509,7 +509,7 @@ static void packMM(
   int nz_count = 0;
   for (size_t i = 0; i < m->count; i++) {
     if(e[i].row >= startRow && e[i].row <= stopRow) {
-      DEBUG_PRINT(DBG_DEV,"Collecting %i  %i  %f\n", e[i].row, e[i].col, e[i].val);
+      DEBUG_PRINT(DBG_DEV, "Collecting %i  %i  %f\n", e[i].row, e[i].col, e[i].val);
       sub_m->entries[nz_count].col = e[i].col;
       sub_m->entries[nz_count].row = e[i].row;
       sub_m->entries[nz_count].val = e[i].val;
@@ -517,7 +517,7 @@ static void packMM(
     }
   }
 
-  CHECK_EXPECTED(1, nz_count, entryCount);
+  CHECK_EXPECTED(DBG_INFO, nz_count, entryCount);
 
   // Copied from matrix.c, sort submatrices by row
   qsort(sub_m->entries, sub_m->count, sizeof(Entry), compareRow);
@@ -662,6 +662,95 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   mLocal->nnz      = m->nnz;
   mLocal->entries  = m->entries;
 #endif /* ifdef _MPI */
+}
+
+// Comparison function required by bsearch
+int compare(const void *a, const void *b) {
+  return (*(int *)a - *(int *)b);
+}
+
+void localizeColumns(Comm* c, MmMatrix* mLocal){
+  Entry* e = mLocal->entries;
+  int leftRemoteOffset = 0;
+
+  int leftRemoteElems[c->size];
+  for(int i = 0; i < c->size; ++i){
+    leftRemoteElems[i] = 0;
+  }
+  int rightRemoteElems[c->size];
+  for(int i = 0; i < c->size; ++i){
+    rightRemoteElems[i] = 0;
+  }
+
+  // TODO: adjust dynamically
+  int remoteElems = 100;
+  int remoteElemsCount = -1;
+  int seenCols[remoteElems];
+  for(int i = 0; i < remoteElems; ++i){
+    seenCols[i] = -1;
+  }
+
+  // Counting phase
+  for(int i = 0; i < mLocal->nnz; ++i){
+    int col = e[i].col;
+
+    int *found = (int *)bsearch(&col, seenCols, 100, sizeof(int), compare);
+      
+    if (!found){
+      DEBUG_PRINT(DBG_DEV, "new column: %i found\n", col);
+      seenCols[remoteElemsCount + 1] = col;
+      ++remoteElemsCount;
+    }
+
+    // If entry is left-remote
+    if(col < mLocal->startRow){
+      ++leftRemoteOffset;
+    }
+    // If entry is right-remote
+    else if(col > mLocal->stopRow){
+
+    }
+  }
+
+  int localOffset = mLocal->stopRow - mLocal->startRow + 1;
+  remoteElemsCount = -1;
+  // Reset remote colunms
+  for(int i = 0; i < remoteElems; ++i){
+    seenCols[i] = -1;
+  }
+
+  // Assignment phase
+  for(int i = 0; i < mLocal->nnz; ++i){
+    int col = e[i].col;
+
+    DEBUG_PRINT(DBG_DEV, "e[i].row = %i, e[i].col = %i, e[i].val = %f, mLocal.startRow = %i, mLocal.stopRow = %i\n", e[i].row, e[i].col, e[i].val, mLocal->startRow, mLocal->stopRow);
+
+    int *found = (int *)bsearch(&col, seenCols, 100, sizeof(int), compare);
+      
+    if (!found){
+      DEBUG_PRINT(DBG_DEV, "new column: %i found\n", col);
+      seenCols[remoteElemsCount + 1] = col;
+      ++remoteElemsCount;
+    }
+
+    // If entry is left-remote
+    if(col < mLocal->startRow){
+      mLocal->entries[i].col = localOffset + remoteElemsCount;
+      printf("Left Remote: localOffset = %i, remoteElemsCount = %i\n", localOffset, remoteElemsCount);
+
+    }
+    // If entry is right-remote
+    else if(col > mLocal->stopRow){
+      mLocal->entries[i].col = localOffset + leftRemoteOffset + remoteElemsCount;
+      printf("Right Remote: localOffset = %i, leftRemoteOffset = %i, remoteElemsCount = %i\n", localOffset, leftRemoteOffset, remoteElemsCount);
+    }
+    // If entry is local
+    else{
+      printf("%i, e[i].col: %i becomes %i\n", i, e[i].col, e[i].col - mLocal->startRow);
+      mLocal->entries[i].col -= mLocal->startRow;
+    }
+    CHECK_NEGATIVE(DBG_DEV, local_row);
+  }
 }
 
 void commPartition(Comm* c, Matrix* A)
