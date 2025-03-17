@@ -29,6 +29,7 @@
 #include "affinity.h"
 #include "allocate.h"
 #include "comm.h"
+#include "debugger.h"
 
 #ifdef _MPI
 static int sizeOfRank(int rank, int size, int N)

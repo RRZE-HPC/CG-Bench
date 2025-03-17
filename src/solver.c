@@ -14,6 +14,7 @@
 #include "matrix.h"
 #include "solver.h"
 #include "util.h"
+#include "debugger.h"
 
 static void initVectors(Matrix* m, CG_FLOAT* x, CG_FLOAT* b, CG_FLOAT* xexact)
 {

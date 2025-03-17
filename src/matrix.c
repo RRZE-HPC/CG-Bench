@@ -9,6 +9,7 @@
 #include "allocate.h"
 #include "matrix.h"
 #include "mmio.h"
+#include "debugger.h"
 
 static inline int compareColumn(const void* a, const void* b)
 {
