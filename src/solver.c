@@ -16,6 +16,26 @@
 #include "util.h"
 #include "debugger.h"
 
+void validateCRSMat(Solver* s, Comm* c){
+  // Fenced print
+  if (c->rank != 0) {
+    int dummy;
+    MPI_Recv(&dummy, 1, MPI_INT, c->rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+  }
+
+  DEBUG_PRINT(DBG_INFO,"On rank %i, after converting to CRS:\nrow:  col:  val:\n", c->rank);
+  for(int row = 0; row < s->A.nr; ++row){
+    for(int j = s->A.rowPtr[row]; j < s->A.rowPtr[row + 1]; ++j){
+      DEBUG_PRINT(DBG_INFO, "%i      %i        %f\n", row, s->A.colInd[j], s->A.val[j]);
+    }
+  }
+
+  if (c->rank != c->size - 1) {
+      int dummy = 0;
+      MPI_Send(&dummy, 1, MPI_INT, c->rank + 1, 0, MPI_COMM_WORLD);
+  }
+}
+
 static void initVectors(Matrix* m, CG_FLOAT* x, CG_FLOAT* b, CG_FLOAT* xexact)
 {
   CG_UINT numRows = m->nr;
@@ -83,6 +103,12 @@ void initSolver(Solver* s, Comm* c, Parameter* p)
     matrixConvertMMtoCRS(&mLocal, &s->A, c->rank, c->size);
   }
 
+#ifdef VALIDATE
+  // Check that local CRS matrices are as expected
+  validateCRSMat(s, c);
+  MPI_Barrier(MPI_COMM_WORLD);
+  exit(EXIT_SUCCESS);
+#endif
   s->x = (CG_FLOAT*)allocate(ARRAY_ALIGNMENT, s->A.nr * sizeof(CG_FLOAT));
   s->b = (CG_FLOAT*)allocate(ARRAY_ALIGNMENT, s->A.nr * sizeof(CG_FLOAT));
   initVectors(&s->A, s->x, s->b, s->xexact);

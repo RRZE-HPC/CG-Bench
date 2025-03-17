@@ -31,10 +31,44 @@
 #include "comm.h"
 #include "debugger.h"
 
+static inline int compareColumn(const void* a, const void* b)
+{
+  const Entry* a_ = (const Entry*)a;
+  const Entry* b_ = (const Entry*)b;
+
+  return (a_->col > b_->col) - (a_->col < b_->col);
+}
+
+static inline int compareRow(const void* a, const void* b)
+{
+  const Entry* a_ = (const Entry*)a;
+  const Entry* b_ = (const Entry*)b;
+
+  return (a_->row > b_->row) - (a_->row < b_->row);
+}
+
 #ifdef _MPI
 static int sizeOfRank(int rank, int size, int N)
 {
   return N / size + ((N % size > rank) ? 1 : 0);
+}
+
+void validateSubMat(Comm* c, MmMatrix* mLocal){
+  if (c->rank != 0) {
+    int dummy;
+    MPI_Recv(&dummy, 1, MPI_INT, c->rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+  }
+
+  DEBUG_PRINT(DBG_INFO,"On rank %i, after sending:\nrow:  col:  val:\n", c->rank);
+  Entry* local_e = mLocal->entries;
+  for(int j = 0; j < mLocal->nnz; ++j){
+    DEBUG_PRINT(DBG_INFO, "%i      %i        %f\n", local_e[j].row, local_e[j].col, local_e[j].val);
+  }
+
+  if (c->rank != c->size - 1) {
+      int dummy = 0;
+      MPI_Send(&dummy, 1, MPI_INT, c->rank + 1, 0, MPI_COMM_WORLD);
+  }
 }
 
 static void probeNeighbors(
@@ -456,26 +490,43 @@ void commPrintBanner(Comm* c)
   }
 }
 
+// NOTE: Matrices are sorted by column
 static void scanMM(
-    MmMatrix* m, int startRow, int stopRow, int* entryCount, int* entryOffset)
+  MmMatrix* m, int startRow, int stopRow, int* entryCount)
 {
   Entry* e = m->entries;
-  int in   = 0;
+  *entryCount = 0;
 
   for (size_t i = 0; i < m->count; i++) {
-    if (e[i].row == startRow && in == 0) {
-      *entryOffset = i;
-      in           = 1;
-    }
-    if (e[i].row == (stopRow + 1)) {
-      *entryCount = (i - *entryOffset);
-      break;
-    }
-    if (i == m->count - 1) {
-      *entryCount = (i - *entryOffset + 1);
-      break;
+    if(e[i].row >= startRow && e[i].row <= stopRow) ++(*entryCount);
+  }
+}
+
+static void packMM(
+  MmMatrix* m, MmMatrix* sub_m, int startRow, int stopRow, int entryCount)
+{
+  Entry* e = m->entries;
+  int nz_count = 0;
+  for (size_t i = 0; i < m->count; i++) {
+    if(e[i].row >= startRow && e[i].row <= stopRow) {
+      DEBUG_PRINT(DBG_DEV,"Collecting %i  %i  %f\n", e[i].row, e[i].col, e[i].val);
+      sub_m->entries[nz_count].col = e[i].col;
+      sub_m->entries[nz_count].row = e[i].row;
+      sub_m->entries[nz_count].val = e[i].val;
+      ++nz_count;
     }
   }
+
+  CHECK_EXPECTED(1, nz_count, entryCount);
+
+  // Copied from matrix.c, sort submatrices by row
+  qsort(sub_m->entries, sub_m->count, sizeof(Entry), compareRow);
+#ifdef __linux__
+  qsort(sub_m->entries, sub_m->count, sizeof(Entry), compareRow);
+#else
+  // BSD has a dedicated mergesort available in its libc
+  mergesort(sub_m->entries, sub_m->count, sizeof(Entry), compareRow);
+#endif
 }
 
 void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
@@ -509,9 +560,10 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   MPI_Datatype types[2] = { MPI_INT, MPI_DOUBLE };
   MPI_Type_create_struct(2, blocklengths, displ, types, &entryType);
   MPI_Type_commit(&entryType);
+  MPI_Request send_requests[size];
 
+  MmMatrix *sub_m = (MmMatrix *)malloc(sizeof(MmMatrix) * size);
   int sendcounts[size];
-  int senddispls[size];
 
   if (commIsMaster(c)) {
     int cursor = 0;
@@ -520,13 +572,30 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
       int startRow = cursor;
       cursor += numRows;
       int stopRow = cursor - 1;
-      scanMM(m, startRow, stopRow, &sendcounts[i], &senddispls[i]);
-      // printf("Rank %d count %d displ %d start %d stop %d\n",
-      //     i,
-      //     sendcounts[i],
-      //     senddispls[i],
-      //     startRow,
-      //     stopRow);
+      scanMM(m, startRow, stopRow, &sendcounts[i]);
+
+      // Allocate submatrices on-root
+      sub_m[i].count = sendcounts[i]; // ?
+      sub_m[i].nr       = stopRow - startRow + 1;
+      sub_m[i].nnz      = sendcounts[i];
+      sub_m[i].totalNr  = m->totalNr;
+      sub_m[i].totalNnz = m->totalNnz;
+      sub_m[i].startRow = startRow;
+      sub_m[i].stopRow  = stopRow;
+      
+      sub_m[i].entries = (Entry*)allocate(ARRAY_ALIGNMENT, sub_m[i].nnz * sizeof(Entry));
+      
+      packMM(m, &sub_m[i], startRow, stopRow, sendcounts[i]);
+      
+      DEBUG_PRINT(DBG_INFO, "Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
+
+#ifdef DEBUG
+      DEBUG_PRINT(DBG_INFO,"On-root, before sending:\nrow:  col:  val:\n");
+      Entry* sub_e = sub_m[i].entries;
+      for(int j = 0; j < sub_m[i].nnz; ++j){
+        DEBUG_PRINT(DBG_INFO, "%i      %i        %f\n", sub_e[j].row, sub_e[j].col, sub_e[j].val);
+      }
+#endif
     }
   }
 
@@ -538,27 +607,53 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   mLocal->totalNnz = totalNnz;
   mLocal->entries  = (Entry*)allocate(ARRAY_ALIGNMENT, count * sizeof(Entry));
 
-  MPI_Scatterv(m->entries,
-      sendcounts,
-      senddispls,
-      entryType,
-      mLocal->entries,
-      count,
-      entryType,
-      0,
-      MPI_COMM_WORLD);
+  DEBUG_PRINT(DBG_INFO, "rank %i will receive %i entries\n", c->rank, count);
 
+  // The root rank will then fulfill each of these Recv posts, then free allocated
+  if (commIsMaster(c)) {
+    for (int i = 0; i < size; i++) {
+      MPI_Isend(sub_m[i].entries, sub_m[i].nnz, entryType, i, i, MPI_COMM_WORLD, &send_requests[i]);
+    }
+  }
+
+  MPI_Recv(mLocal->entries, mLocal->count, entryType, 0, c->rank, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
+
+  // Allows for root rank to send to itself
+  if (commIsMaster(c)) MPI_Waitall(size, send_requests, MPI_STATUSES_IGNORE);
+
+#ifdef VALIDATE
+  if (commIsMaster(c)) {
+    printf("Communication of sub matrices sucessful\n");
+  }
+  MPI_Barrier(MPI_COMM_WORLD);
+#endif
+
+
+  // NOTE: depends on local matrices being row-sorted
   mLocal->startRow = mLocal->entries[0].row;
   mLocal->stopRow  = mLocal->entries[count - 1].row;
   mLocal->nr       = mLocal->stopRow - mLocal->startRow + 1;
   mLocal->nnz      = count;
-  // printf("Rank %d count: %d start %d stop %d\n",
-  //     rank,
-  //     count,
-  //     mLocal->startRow,
-  //     mLocal->stopRow);
+
+  DEBUG_PRINT(DBG_INFO, "Rank %d count: %d start %d stop %d\n",
+      rank,
+      count,
+      mLocal->startRow,
+      mLocal->stopRow);
+
+#ifdef DEBUG
+  validateSubMat(c, mLocal);
+#endif
 
   MPI_Type_free(&entryType);
+
+  if (commIsMaster(c)) {
+    for (int i = 0; i < size; i++) {
+      free(sub_m[i].entries);
+    }
+    free(sub_m);
+  }
+
 #else
   mLocal->startRow = 0;
   mLocal->stopRow  = m->nr - 1;

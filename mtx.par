@@ -1,0 +1,8 @@
+#==============================================================================
+#                              HPCG Matrix market
+#==============================================================================
+
+#filename /home/titan/unrz/unrz55/matrices/HPCG-72-72-72.mtx #Space is required after string!
+filename /home/Ultimate-SpMV/matrices/myMat.mtx 
+itermax 150
+eps 0.0

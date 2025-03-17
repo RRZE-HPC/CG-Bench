@@ -268,7 +268,9 @@ void matrixConvertMMtoCRS(MmMatrix* mm, Matrix* m, int rank, int size)
   int startRow   = m->startRow;
 
   for (int i = 0; i < mm->count; i++) {
-    valsPerRow[entries[i].row - startRow]++;
+    int local_row = entries[i].row - startRow;
+    CHECK_NEGATIVE(1, local_row);
+    valsPerRow[local_row]++;
   }
 
   m->rowPtr[0] = 0;
