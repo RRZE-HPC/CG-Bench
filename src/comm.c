@@ -59,10 +59,10 @@ void validateSubMat(Comm* c, MmMatrix* mLocal){
     MPI_Recv(&dummy, 1, MPI_INT, c->rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
   }
 
-  DEBUG_PRINT(DBG_INFO,"On rank %i, after sending:\nrow:  col:  val:\n", c->rank);
+  printf("On rank %i, after sending:\nrow:  col:  val:\n", c->rank);
   Entry* local_e = mLocal->entries;
   for(int j = 0; j < mLocal->nnz; ++j){
-    DEBUG_PRINT(DBG_INFO, "%i      %i        %f\n", local_e[j].row, local_e[j].col, local_e[j].val);
+    printf("%i      %i        %f\n", local_e[j].row, local_e[j].col, local_e[j].val);
   }
 
   if (c->rank != c->size - 1) {
@@ -621,7 +621,7 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   // Allows for root rank to send to itself
   if (commIsMaster(c)) MPI_Waitall(size, send_requests, MPI_STATUSES_IGNORE);
 
-#ifdef VALIDATE
+#ifdef DEBUG
   if (commIsMaster(c)) {
     printf("Communication of sub matrices sucessful\n");
   }
