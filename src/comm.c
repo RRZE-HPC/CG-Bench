@@ -573,20 +573,19 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
       sub_m[i].totalNnz = m->totalNnz;
       sub_m[i].startRow = startRow;
       sub_m[i].stopRow  = stopRow;
-      
       sub_m[i].entries = (Entry*)allocate(ARRAY_ALIGNMENT, sub_m[i].nnz * sizeof(Entry));
 
-      DEBUG_PRINT(DBG_INFO, "before packMM, Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
+      DEBUG_PRINT(DBG_DEV, "before packMM, Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
       
       packMM(m, &sub_m[i], startRow, stopRow, sendcounts[i]);
       
-      DEBUG_PRINT(DBG_INFO, "after packMM, Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
+      DEBUG_PRINT(DBG_DEV, "after packMM, Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
 
 #ifdef DEBUG
-      DEBUG_PRINT(DBG_INFO,"On-root, before sending:\nrow:  col:  val:\n");
+      DEBUG_PRINT(DBG_DEV,"On-root, before sending:\nrow:  col:  val:\n");
       Entry* sub_e = sub_m[i].entries;
       for(int j = 0; j < sub_m[i].nnz; ++j){
-        DEBUG_PRINT(DBG_INFO, "%i      %i        %f\n", sub_e[j].row, sub_e[j].col, sub_e[j].val);
+        DEBUG_PRINT(DBG_DEV, "%i      %i        %f\n", sub_e[j].row, sub_e[j].col, sub_e[j].val);
       }
 #endif
     }
@@ -600,7 +599,7 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   mLocal->totalNnz = totalNnz;
   mLocal->entries  = (Entry*)allocate(ARRAY_ALIGNMENT, count * sizeof(Entry));
 
-  DEBUG_PRINT(DBG_INFO, "rank %i will receive %i entries\n", c->rank, count);
+  DEBUG_PRINT(DBG_DEV, "rank %i will receive %i entries\n", c->rank, count);
 
   // The root rank will then fulfill each of these Recv posts, then free allocated
   if (commIsMaster(c)) {
@@ -634,13 +633,13 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   mLocal->nr       = mLocal->stopRow - mLocal->startRow + 1;
   mLocal->nnz      = count;
 
-  DEBUG_PRINT(DBG_INFO, "Rank %d count: %d start %d stop %d\n",
+  DEBUG_PRINT(DBG_DEV, "Rank %d count: %d start %d stop %d\n",
       rank,
       count,
       mLocal->startRow,
       mLocal->stopRow);
 
-#ifdef DEBUG
+#ifdef VALIDATE
   validateSubMat(c, mLocal);
 #endif
 
@@ -692,7 +691,7 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
   int *leftSeenCols = (int *)malloc(sizeof(int) * (mLocal->totalNr / 2));
   int *rightSeenCols = (int *)malloc(sizeof(int) * (mLocal->totalNr / 2));
 
-  for(int i = 0; i < mLocal->totalNr; ++i){
+  for(int i = 0; i < mLocal->totalNr / 2; ++i){
     leftSeenCols[i] = -1;
     rightSeenCols[i] = -1;
   }
