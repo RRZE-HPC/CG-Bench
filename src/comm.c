@@ -663,9 +663,22 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
 #endif /* ifdef _MPI */
 }
 
-// Comparison function required by bsearch
-int compare(const void *a, const void *b) {
-  return (*(int *)a - *(int *)b);
+int binary_search(int arr[], int size, int target) {
+  int left = 0, right = size - 1;
+
+  while (left <= right) {
+      int mid = left + (right - left) / 2;  // Prevents potential overflow
+
+      if (arr[mid] == target) {
+          return 1;  // Element found
+      } else if (arr[mid] < target) {
+          left = mid + 1;  // Search in the right half
+      } else {
+          right = mid - 1;  // Search in the left half
+      }
+  }
+
+  return 0;  // Element not found
 }
 
 void localizeColumns(Comm* c, MmMatrix* mLocal){
@@ -693,10 +706,8 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
 
     // If entry is left-remote
     if(col < mLocal->startRow){
-      int *found = (int *)bsearch(&col, seenCols, mLocal->totalNr, sizeof(int), compare);
-      
-      if (!found){
-        DEBUG_PRINT(DBG_DEV, "rank: %i, new column: %i found\n", c->rank, col);
+      if (!binary_search(seenCols, remoteElemsCount + 1, col)){
+        DEBUG_PRINT(DBG_DEV, "rank: %i, new left remote column: %i found during counting phase\n", c->rank, col);
         seenCols[remoteElemsCount + 1] = col;
         ++remoteElemsCount;
       }
@@ -704,7 +715,7 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
     }
     // If entry is right-remote
     else if(col > mLocal->stopRow){
-
+      // Do I need to do anything here?
     }
   }
 
@@ -722,35 +733,30 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
     DEBUG_PRINT(DBG_DEV, "e[i].row = %i, e[i].col = %i, e[i].val = %f, mLocal.startRow = %i, mLocal.stopRow = %i\n", e[i].row, e[i].col, e[i].val, mLocal->startRow, mLocal->stopRow);
 
     // If entry is left-remote
-    if(col < mLocal->startRow){
-      int *found = (int *)bsearch(&col, seenCols, mLocal->totalNr, sizeof(int), compare);
-      
-      if (!found){
-        DEBUG_PRINT(DBG_DEV, "rank: %i, new column: %i found\n", c->rank, col);
+    if(col < mLocal->startRow){      
+      if (!binary_search(seenCols, remoteElemsCount + 1, col)){
+        DEBUG_PRINT(DBG_DEV, "rank: %i, new left remote column: %i found during assignment phase\n", c->rank, col);
         seenCols[remoteElemsCount + 1] = col;
         ++remoteElemsCount;
       }
       mLocal->entries[i].col = localOffset + remoteElemsCount;
-      printf("Left Remote: localOffset = %i, remoteElemsCount = %i\n", localOffset, remoteElemsCount);
+      DEBUG_PRINT(DBG_DEV, "Left Remote: localOffset = %i, remoteElemsCount = %i\n", localOffset, remoteElemsCount);
 
     }
     // If entry is right-remote
-    else if(col > mLocal->stopRow){
-
-      int *found = (int *)bsearch(&col, seenCols, mLocal->totalNr, sizeof(int), compare);
-      
-      if (!found){
-        DEBUG_PRINT(DBG_DEV, "rank: %i, new column: %i found\n", c->rank, col);
+    else if(col > mLocal->stopRow){      
+      if (!binary_search(seenCols, remoteElemsCount + 1, col)){
+        DEBUG_PRINT(DBG_DEV, "rank: %i, new right remote column: %i found assignment phase\n", c->rank, col);
         seenCols[remoteElemsCount + 1] = col;
         ++remoteElemsCount;
       }
 
       mLocal->entries[i].col = localOffset + leftRemoteOffset + remoteElemsCount;
-      printf("Right Remote: localOffset = %i, leftRemoteOffset = %i, remoteElemsCount = %i\n", localOffset, leftRemoteOffset, remoteElemsCount);
+      DEBUG_PRINT(DBG_DEV, "Right Remote: localOffset = %i, leftRemoteOffset = %i, remoteElemsCount = %i\n", localOffset, leftRemoteOffset, remoteElemsCount);
     }
     // If entry is local
     else{
-      printf("%i, e[i].col: %i becomes %i\n", i, e[i].col, e[i].col - mLocal->startRow);
+      DEBUG_PRINT(DBG_DEV, "%i, e[i].col: %i becomes %i\n", i, e[i].col, e[i].col - mLocal->startRow);
       mLocal->entries[i].col -= mLocal->startRow;
     }
 

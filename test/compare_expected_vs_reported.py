@@ -78,6 +78,5 @@ if __name__ == "__main__":
 			file_name = os.path.basename(entry)
 			print(f"Validating: {file_name}...")
 			diff = compare_files(f"results/expected/{file_name}", f"results/reported/{file_name}")
-			print("Errors: ", end='')
-			pprint.pprint(diff)
+			print("Errors:", pprint.pformat(diff, compact=True))
 
