@@ -19,7 +19,7 @@ do
 	matrix_name="${matrix##*/}"
 	matrix_name="${matrix_name%.mtx}"
 	sed -i "/filename/c\filename ${matrix} " ../../mtx.par
-	for num_procs in 2;
+	for num_procs in 2 3;
 	do
 		mpirun -n $num_procs ./../../cgBench-ICC ../../mtx.par >> /home/CG-Bench/test/results/reported/${matrix_name}_${num_procs}_ranks_CRS_splits.txt
 	done

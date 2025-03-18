@@ -683,22 +683,19 @@ int binary_search(int arr[], int size, int target) {
 
 void localizeColumns(Comm* c, MmMatrix* mLocal){
   Entry* e = mLocal->entries;
-  int leftRemoteOffset = 0;
 
-  int leftRemoteElems[c->size];
-  for(int i = 0; i < c->size; ++i){
-    leftRemoteElems[i] = 0;
-  }
-  int rightRemoteElems[c->size];
-  for(int i = 0; i < c->size; ++i){
-    rightRemoteElems[i] = 0;
-  }
-
-  int remoteElemsCount = -1;
+  int leftRemoteElemsCount = -1;
+  int rightRemoteElemsCount = -1;
 
   // TODO: Probably a better way to do this, too memory hungry
-  int *seenCols = (int *)malloc(sizeof(int) * mLocal->totalNr);
-  for(int i = 0; i < mLocal->totalNr; ++i) seenCols[i] = -1;
+  // Each side needs *up to* half of the total number of columns
+  int *leftSeenCols = (int *)malloc(sizeof(int) * (mLocal->totalNr / 2));
+  int *rightSeenCols = (int *)malloc(sizeof(int) * (mLocal->totalNr / 2));
+
+  for(int i = 0; i < mLocal->totalNr; ++i){
+    leftSeenCols[i] = -1;
+    rightSeenCols[i] = -1;
+  }
 
   // Counting phase
   for(int i = 0; i < mLocal->nnz; ++i){
@@ -706,58 +703,65 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
 
     // If entry is left-remote
     if(col < mLocal->startRow){
-      if (!binary_search(seenCols, remoteElemsCount + 1, col)){
+      if (!binary_search(leftSeenCols, leftRemoteElemsCount + 1, col)){
         DEBUG_PRINT(DBG_DEV, "rank: %i, new left remote column: %i found during counting phase\n", c->rank, col);
-        seenCols[remoteElemsCount + 1] = col;
-        ++remoteElemsCount;
+        leftSeenCols[leftRemoteElemsCount + 1] = col;
+        ++leftRemoteElemsCount;
       }
-      ++leftRemoteOffset;
-    }
-    // If entry is right-remote
-    else if(col > mLocal->stopRow){
-      // Do I need to do anything here?
     }
   }
 
+  // Record offsets for remote elements
+  int leftRemoteOffset = leftRemoteElemsCount + 1;
   int localOffset = mLocal->stopRow - mLocal->startRow + 1;
-  // Reset remote colunms
-  for(int i = 0; i < remoteElemsCount; ++i) seenCols[i] = -1;
-  // Reset remoteElemsCount
-  remoteElemsCount = -1;
-  
 
+  // Reset the "seen" remote colunms
+  for(int i = 0; i < leftRemoteElemsCount; ++i){
+    leftSeenCols[i] = -1;
+  }
+  for(int i = 0; i < rightRemoteElemsCount; ++i){
+    rightSeenCols[i] = -1;
+  }
+
+  // Reset remoteElemsCounts for assignment phase
+  leftRemoteElemsCount = -1;
+  rightRemoteElemsCount = -1;
+  
   // Assignment phase
   for(int i = 0; i < mLocal->nnz; ++i){
     int col = e[i].col;
 
     DEBUG_PRINT(DBG_DEV, "e[i].row = %i, e[i].col = %i, e[i].val = %f, mLocal.startRow = %i, mLocal.stopRow = %i\n", e[i].row, e[i].col, e[i].val, mLocal->startRow, mLocal->stopRow);
 
-    // If entry is left-remote
-    if(col < mLocal->startRow){      
-      if (!binary_search(seenCols, remoteElemsCount + 1, col)){
+    if(col < mLocal->startRow){ // If entry is left-remote
+
+      if (!binary_search(leftSeenCols, leftRemoteElemsCount + 1, col)){
         DEBUG_PRINT(DBG_DEV, "rank: %i, new left remote column: %i found during assignment phase\n", c->rank, col);
-        seenCols[remoteElemsCount + 1] = col;
-        ++remoteElemsCount;
+        leftSeenCols[leftRemoteElemsCount + 1] = col;
+        ++leftRemoteElemsCount;
       }
-      mLocal->entries[i].col = localOffset + remoteElemsCount;
-      DEBUG_PRINT(DBG_DEV, "Left Remote: localOffset = %i, remoteElemsCount = %i\n", localOffset, remoteElemsCount);
 
+      mLocal->entries[i].col = localOffset + leftRemoteElemsCount;
+      DEBUG_PRINT(DBG_DEV, "Left Remote: localOffset = %i, remoteElemsCount = %i\n", localOffset, leftRemoteElemsCount);
+    
     }
-    // If entry is right-remote
-    else if(col > mLocal->stopRow){      
-      if (!binary_search(seenCols, remoteElemsCount + 1, col)){
+    else if(col > mLocal->stopRow){ // If entry is "right-remote"
+
+      if (!binary_search(rightSeenCols, rightRemoteElemsCount + 1, col)){
         DEBUG_PRINT(DBG_DEV, "rank: %i, new right remote column: %i found assignment phase\n", c->rank, col);
-        seenCols[remoteElemsCount + 1] = col;
-        ++remoteElemsCount;
+        rightSeenCols[rightRemoteElemsCount + 1] = col;
+        ++rightRemoteElemsCount;
       }
 
-      mLocal->entries[i].col = localOffset + leftRemoteOffset + remoteElemsCount;
-      DEBUG_PRINT(DBG_DEV, "Right Remote: localOffset = %i, leftRemoteOffset = %i, remoteElemsCount = %i\n", localOffset, leftRemoteOffset, remoteElemsCount);
+      mLocal->entries[i].col = localOffset + leftRemoteOffset + rightRemoteElemsCount;
+      DEBUG_PRINT(DBG_DEV, "Right Remote: localOffset = %i, leftRemoteOffset = %i, remoteElemsCount = %i\n", localOffset, leftRemoteOffset, rightRemoteElemsCount);
+    
     }
-    // If entry is local
-    else{
+    else{ // If entry is "local"
+
       DEBUG_PRINT(DBG_DEV, "%i, e[i].col: %i becomes %i\n", i, e[i].col, e[i].col - mLocal->startRow);
       mLocal->entries[i].col -= mLocal->startRow;
+    
     }
 
     // In any case, the column index should never be negative
@@ -774,7 +778,8 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
     mergesort(mLocal->entries, mLocal->count, sizeof(Entry), compareRow);
   #endif
 
-  free(seenCols);
+  free(leftSeenCols);
+  free(rightSeenCols);
 }
 
 void commPartition(Comm* c, Matrix* A)
