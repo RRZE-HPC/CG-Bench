@@ -4,27 +4,27 @@ import ast
 import pprint
 
 def compare_files(expected_file, reported_file):
-	def compare_dicts_and_return_diff(dict1, dict2):
+	def compare_dicts_and_return_diff(expected, reported):
 		diff = {}
 
-		# Loop through each key in dict1
-		for key in dict1:
+		# Loop through each key in expected
+		for key in expected:
 			# Get the sub-dictionaries for the current key
-			sub_dict1 = dict1[key]
-			sub_dict2 = dict2.get(key, {})
+			sub_expected = expected[key]
+			sub_reported = reported.get(key, {})
 
 			# Loop through the keys within each sub-dictionary (colInd, rowPtr, val)
-			for sub_key in sub_dict1:
-				list1 = sub_dict1[sub_key]
-				list2 = sub_dict2.get(sub_key, [])
+			for sub_key in sub_expected:
+				list1 = sub_expected[sub_key]
+				list2 = sub_reported.get(sub_key, [])
 
 				# If lists are different, record the difference in the diff dictionary
 				if list1 != list2:
 					if key not in diff:
 						diff[key] = {}
 					diff[key][sub_key] = {
-						"dict1": list1,
-						"dict2": list2
+						"expected": list1,
+						"reported": list2
 					}
 
 		return diff

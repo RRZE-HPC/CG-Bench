@@ -5,13 +5,13 @@ declare -a matrices=(
 	"/home/CG-Bench/test/data/myBigMat_mod1.mtx"
 	"/home/CG-Bench/test/data/myBigMat_mod2.mtx"
 	"/home/CG-Bench/test/data/myBigMat_mod3.mtx"
-	# "/home/CG-Bench/test/data/myBigMat_mod4.mtx"
-	# "/home/CG-Bench/test/data/myBigMat_mod5.mtx"
-	# "/home/CG-Bench/test/data/myBigMat_mod6.mtx"
-	# "/home/CG-Bench/test/data/myBigMat_mod7.mtx"
-	# "/home/CG-Bench/test/data/myBigMat_mod8.mtx"
-	# "/home/CG-Bench/test/data/myBigMat_mod9.mtx"
-	# "/home/CG-Bench/test/data/myBigMat_mod10.mtx"
+	"/home/CG-Bench/test/data/myBigMat_mod4.mtx"
+	"/home/CG-Bench/test/data/myBigMat_mod5.mtx"
+	"/home/CG-Bench/test/data/myBigMat_mod6.mtx"
+	"/home/CG-Bench/test/data/myBigMat_mod7.mtx"
+	"/home/CG-Bench/test/data/myBigMat_mod8.mtx"
+	"/home/CG-Bench/test/data/myBigMat_mod9.mtx"
+	"/home/CG-Bench/test/data/myBigMat_mod10.mtx"
 )
 
 for matrix in "${matrices[@]}";
