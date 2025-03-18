@@ -135,6 +135,8 @@ void matrixGenerate(
 
 void matrixRead(MmMatrix* m, char* filename)
 {
+  DEBUG_PRINT(DBG_INFO, "matrixRead begin\n");
+
   MM_typecode matcode;
   FILE* f = NULL;
   int M, N, nz;
@@ -241,10 +243,16 @@ void matrixRead(MmMatrix* m, char* filename)
   mergesort(m->entries, m->count, sizeof(Entry), compareRow);
 #endif
   // dumpMMMatrix(m);
+
+  DEBUG_PRINT(DBG_INFO, "matrixRead complete\n");
 }
 
 void matrixConvertMMtoCRS(MmMatrix* mm, Matrix* m, int rank, int size)
 {
+  if (rank == 0) {
+    DEBUG_PRINT(DBG_INFO, "matrixConvertMMtoCRS begin\n");
+  }
+
   m->startRow = mm->startRow;
   m->stopRow  = mm->stopRow;
   m->totalNr  = mm->totalNr;
@@ -285,5 +293,9 @@ void matrixConvertMMtoCRS(MmMatrix* mm, Matrix* m, int rank, int size)
       m->val[id]    = (CG_FLOAT)entries[id].val;
       m->colInd[id] = (CG_UINT)entries[id].col;
     }
+  }
+
+  if (rank == 0) {
+    DEBUG_PRINT(DBG_INFO, "matrixConvertMMtoCRS complete\n");
   }
 }

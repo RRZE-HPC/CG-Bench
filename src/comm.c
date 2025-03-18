@@ -522,7 +522,11 @@ static void packMM(
 
 void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
 {
+  if (commIsMaster(c)) {
+    DEBUG_PRINT(DBG_INFO, "commDistributeMatrix begin\n");
+  }
 #ifdef _MPI
+  MPI_Barrier(MPI_COMM_WORLD);
 
   int rank = c->rank;
   int size = c->size;
@@ -551,10 +555,16 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   MPI_Datatype types[2] = { MPI_INT, MPI_DOUBLE };
   MPI_Type_create_struct(2, blocklengths, displ, types, &entryType);
   MPI_Type_commit(&entryType);
-  MPI_Request send_requests[size];
 
-  MmMatrix *sub_m = (MmMatrix *)malloc(sizeof(MmMatrix) * size);
-  int sendcounts[3 * size];
+  MPI_Request* send_requests = NULL;
+  MmMatrix *sub_m = NULL;
+
+  if (commIsMaster(c)){
+    send_requests = malloc(3 * size * sizeof(MPI_Request));
+    sub_m = (MmMatrix *)malloc(sizeof(MmMatrix) * size);
+  }   
+  
+  int sendcounts[size];
 
   if (commIsMaster(c)) {
     int cursor = 0;
@@ -604,10 +614,22 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   // The root rank will then fulfill each of these Recv posts, then free allocated
   if (commIsMaster(c)) {
     for (int i = 0; i < size; i++) {
+      // Sanity check
+      if (sub_m[i].entries == NULL) {
+        fprintf(stderr, "Error: sub_m[%d].entries is NULL\n", i);
+        MPI_Abort(MPI_COMM_WORLD, 1);
+      }
+
       MPI_Isend(sub_m[i].entries, sub_m[i].nnz, entryType, i, i, MPI_COMM_WORLD, &send_requests[i]);
       MPI_Isend(&sub_m[i].startRow, 1, MPI_INT, i, size + i, MPI_COMM_WORLD, &send_requests[size + i]);
       MPI_Isend(&sub_m[i].stopRow, 1, MPI_INT, i, 2*size + i, MPI_COMM_WORLD, &send_requests[2*size + i]);
     }
+  }
+
+  // Sanity check
+  if (mLocal->entries == NULL) {
+    fprintf(stderr, "Error: mLocal->entries is NULL on rank %d\n", c->rank);
+    MPI_Abort(MPI_COMM_WORLD, 1);
   }
 
   MPI_Recv(mLocal->entries, mLocal->count, entryType, 0, c->rank, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
@@ -621,7 +643,7 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
 
 #ifdef DEBUG
   if (commIsMaster(c)) {
-    printf("Communication of sub matrices sucessful\n");
+    DEBUG_PRINT(DBG_INFO, "Communication of sub matrices sucessful\n");
   }
   MPI_Barrier(MPI_COMM_WORLD);
 #endif
@@ -646,12 +668,15 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   MPI_Type_free(&entryType);
 
   if (commIsMaster(c)) {
+    free(send_requests);
+
     for (int i = 0; i < size; i++) {
       free(sub_m[i].entries);
     }
     free(sub_m);
   }
 
+  MPI_Barrier(MPI_COMM_WORLD);
 #else
   mLocal->startRow = 0;
   mLocal->stopRow  = m->nr - 1;
@@ -660,6 +685,9 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   mLocal->nnz      = m->nnz;
   mLocal->entries  = m->entries;
 #endif /* ifdef _MPI */
+  if (commIsMaster(c)) {
+    DEBUG_PRINT(DBG_INFO, "commDistributeMatrix complete\n");
+  }
 }
 
 int binary_search(int arr[], int size, int target) {
@@ -681,6 +709,12 @@ int binary_search(int arr[], int size, int target) {
 }
 
 void localizeColumns(Comm* c, MmMatrix* mLocal){
+  if (commIsMaster(c)) {
+    DEBUG_PRINT(DBG_INFO, "localizeColumns begin\n");
+  }
+#ifdef _MPI
+  MPI_Barrier(MPI_COMM_WORLD);
+
   Entry* e = mLocal->entries;
 
   int leftRemoteElemsCount = -1;
@@ -779,6 +813,12 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
 
   free(leftSeenCols);
   free(rightSeenCols);
+
+  MPI_Barrier(MPI_COMM_WORLD);
+#endif
+  if (commIsMaster(c)) {
+    DEBUG_PRINT(DBG_INFO, "localizeColumns complete\n");
+  }
 }
 
 void commPartition(Comm* c, Matrix* A)
