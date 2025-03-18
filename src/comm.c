@@ -518,15 +518,6 @@ static void packMM(
   }
 
   CHECK_EXPECTED(DBG_INFO, nz_count, entryCount);
-
-  // Copied from matrix.c, sort submatrices by row
-  qsort(sub_m->entries, sub_m->count, sizeof(Entry), compareRow);
-#ifdef __linux__
-  qsort(sub_m->entries, sub_m->count, sizeof(Entry), compareRow);
-#else
-  // BSD has a dedicated mergesort available in its libc
-  mergesort(sub_m->entries, sub_m->count, sizeof(Entry), compareRow);
-#endif
 }
 
 void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
@@ -563,7 +554,7 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   MPI_Request send_requests[size];
 
   MmMatrix *sub_m = (MmMatrix *)malloc(sizeof(MmMatrix) * size);
-  int sendcounts[size];
+  int sendcounts[3 * size];
 
   if (commIsMaster(c)) {
     int cursor = 0;
@@ -584,10 +575,12 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
       sub_m[i].stopRow  = stopRow;
       
       sub_m[i].entries = (Entry*)allocate(ARRAY_ALIGNMENT, sub_m[i].nnz * sizeof(Entry));
+
+      DEBUG_PRINT(DBG_INFO, "before packMM, Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
       
       packMM(m, &sub_m[i], startRow, stopRow, sendcounts[i]);
       
-      DEBUG_PRINT(DBG_INFO, "Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
+      DEBUG_PRINT(DBG_INFO, "after packMM, Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
 
 #ifdef DEBUG
       DEBUG_PRINT(DBG_INFO,"On-root, before sending:\nrow:  col:  val:\n");
@@ -613,13 +606,19 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   if (commIsMaster(c)) {
     for (int i = 0; i < size; i++) {
       MPI_Isend(sub_m[i].entries, sub_m[i].nnz, entryType, i, i, MPI_COMM_WORLD, &send_requests[i]);
+      MPI_Isend(&sub_m[i].startRow, 1, MPI_INT, i, size + i, MPI_COMM_WORLD, &send_requests[size + i]);
+      MPI_Isend(&sub_m[i].stopRow, 1, MPI_INT, i, 2*size + i, MPI_COMM_WORLD, &send_requests[2*size + i]);
     }
   }
 
   MPI_Recv(mLocal->entries, mLocal->count, entryType, 0, c->rank, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
+  MPI_Recv(&mLocal->startRow, 1, MPI_INT, 0, size + c->rank, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
+  MPI_Recv(&mLocal->stopRow, 1, MPI_INT, 0, 2*size + c->rank, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
 
   // Allows for root rank to send to itself
-  if (commIsMaster(c)) MPI_Waitall(size, send_requests, MPI_STATUSES_IGNORE);
+  if (commIsMaster(c)){
+    MPI_Waitall(3 * size, send_requests, MPI_STATUSES_IGNORE);
+  }
 
 #ifdef DEBUG
   if (commIsMaster(c)) {
@@ -628,10 +627,10 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
-
-  // NOTE: depends on local matrices being row-sorted
-  mLocal->startRow = mLocal->entries[0].row;
-  mLocal->stopRow  = mLocal->entries[count - 1].row;
+  // NOTE: Since local matrices are still column sorted at this point,
+  // we cannot simply take first and last element as start and stop row
+  // mLocal->startRow = mLocal->entries[0].row;
+  // mLocal->stopRow  = mLocal->entries[count - 1].row;
   mLocal->nr       = mLocal->stopRow - mLocal->startRow + 1;
   mLocal->nnz      = count;
 
@@ -682,28 +681,25 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
     rightRemoteElems[i] = 0;
   }
 
-  // TODO: adjust dynamically
-  int remoteElems = 100;
   int remoteElemsCount = -1;
-  int seenCols[remoteElems];
-  for(int i = 0; i < remoteElems; ++i){
-    seenCols[i] = -1;
-  }
+
+  // TODO: Probably a better way to do this, too memory hungry
+  int *seenCols = (int *)malloc(sizeof(int) * mLocal->totalNr);
+  for(int i = 0; i < mLocal->totalNr; ++i) seenCols[i] = -1;
 
   // Counting phase
   for(int i = 0; i < mLocal->nnz; ++i){
     int col = e[i].col;
 
-    int *found = (int *)bsearch(&col, seenCols, 100, sizeof(int), compare);
-      
-    if (!found){
-      DEBUG_PRINT(DBG_DEV, "new column: %i found\n", col);
-      seenCols[remoteElemsCount + 1] = col;
-      ++remoteElemsCount;
-    }
-
     // If entry is left-remote
     if(col < mLocal->startRow){
+      int *found = (int *)bsearch(&col, seenCols, mLocal->totalNr, sizeof(int), compare);
+      
+      if (!found){
+        DEBUG_PRINT(DBG_DEV, "rank: %i, new column: %i found\n", c->rank, col);
+        seenCols[remoteElemsCount + 1] = col;
+        ++remoteElemsCount;
+      }
       ++leftRemoteOffset;
     }
     // If entry is right-remote
@@ -713,11 +709,11 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
   }
 
   int localOffset = mLocal->stopRow - mLocal->startRow + 1;
-  remoteElemsCount = -1;
   // Reset remote colunms
-  for(int i = 0; i < remoteElems; ++i){
-    seenCols[i] = -1;
-  }
+  for(int i = 0; i < remoteElemsCount; ++i) seenCols[i] = -1;
+  // Reset remoteElemsCount
+  remoteElemsCount = -1;
+  
 
   // Assignment phase
   for(int i = 0; i < mLocal->nnz; ++i){
@@ -725,22 +721,30 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
 
     DEBUG_PRINT(DBG_DEV, "e[i].row = %i, e[i].col = %i, e[i].val = %f, mLocal.startRow = %i, mLocal.stopRow = %i\n", e[i].row, e[i].col, e[i].val, mLocal->startRow, mLocal->stopRow);
 
-    int *found = (int *)bsearch(&col, seenCols, 100, sizeof(int), compare);
-      
-    if (!found){
-      DEBUG_PRINT(DBG_DEV, "new column: %i found\n", col);
-      seenCols[remoteElemsCount + 1] = col;
-      ++remoteElemsCount;
-    }
-
     // If entry is left-remote
     if(col < mLocal->startRow){
+      int *found = (int *)bsearch(&col, seenCols, mLocal->totalNr, sizeof(int), compare);
+      
+      if (!found){
+        DEBUG_PRINT(DBG_DEV, "rank: %i, new column: %i found\n", c->rank, col);
+        seenCols[remoteElemsCount + 1] = col;
+        ++remoteElemsCount;
+      }
       mLocal->entries[i].col = localOffset + remoteElemsCount;
       printf("Left Remote: localOffset = %i, remoteElemsCount = %i\n", localOffset, remoteElemsCount);
 
     }
     // If entry is right-remote
     else if(col > mLocal->stopRow){
+
+      int *found = (int *)bsearch(&col, seenCols, mLocal->totalNr, sizeof(int), compare);
+      
+      if (!found){
+        DEBUG_PRINT(DBG_DEV, "rank: %i, new column: %i found\n", c->rank, col);
+        seenCols[remoteElemsCount + 1] = col;
+        ++remoteElemsCount;
+      }
+
       mLocal->entries[i].col = localOffset + leftRemoteOffset + remoteElemsCount;
       printf("Right Remote: localOffset = %i, leftRemoteOffset = %i, remoteElemsCount = %i\n", localOffset, leftRemoteOffset, remoteElemsCount);
     }
@@ -749,8 +753,22 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
       printf("%i, e[i].col: %i becomes %i\n", i, e[i].col, e[i].col - mLocal->startRow);
       mLocal->entries[i].col -= mLocal->startRow;
     }
-    CHECK_NEGATIVE(DBG_DEV, local_row);
+
+    // In any case, the column index should never be negative
+    CHECK_NEGATIVE(DBG_DEV, mLocal->entries[i].col);
   }
+
+  // After we compress all column indices, we can sort by row
+  // Copied from matrix.c, sort submatrices by row
+  qsort(mLocal->entries, mLocal->count, sizeof(Entry), compareRow);
+  #ifdef __linux__
+    qsort(mLocal->entries, mLocal->count, sizeof(Entry), compareRow);
+  #else
+    // BSD has a dedicated mergesort available in its libc
+    mergesort(mLocal->entries, mLocal->count, sizeof(Entry), compareRow);
+  #endif
+
+  free(seenCols);
 }
 
 void commPartition(Comm* c, Matrix* A)
