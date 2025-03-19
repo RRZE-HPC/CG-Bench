@@ -129,7 +129,6 @@ void initSolver(Solver* s, Comm* c, Parameter* p)
   MPI_Barrier(MPI_COMM_WORLD);
   validateCRSMat(s, c);
   MPI_Barrier(MPI_COMM_WORLD);
-  exit(EXIT_SUCCESS);
 #endif
 
   s->x = (CG_FLOAT*)allocate(ARRAY_ALIGNMENT, s->A.nr * sizeof(CG_FLOAT));

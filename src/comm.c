@@ -984,9 +984,30 @@ void commExchange(Comm* c, Matrix* A, CG_FLOAT* x)
   // Externals are at end of locals
   CG_FLOAT* externals = x + A->nr;
 
+#ifdef VALIDATE
+  if(c->rank == TEST_RANK){
+    int buffer_space = A->nr;
+    for (int i = 0; i < neighborCount; i++) {
+      buffer_space += recvCount[i];
+    }
+
+    printf("rank %i Before communication,\nx = [", c->rank);
+    for(int i = 0; i < buffer_space; ++i) {
+      printf("%f, ", x[i]);
+    }
+    printf("]\n");
+  }
+#endif
+
   // Post receives
+  int recv_idx = A->nr;
   for (int i = 0; i < neighborCount; i++) {
+    
     int count = recvCount[i];
+
+    DEBUG_PRINT(DBG_VINFO, \
+      "rank %i receving %i elems into x[%i] from rank %i\n",\
+      c->rank, count, recv_idx, i);
 
     MPI_Irecv(externals,
         count,
@@ -997,6 +1018,7 @@ void commExchange(Comm* c, Matrix* A, CG_FLOAT* x)
         request + i);
 
     externals += count;
+    recv_idx += count;
   }
 
   // Copy values for all ranks into send buffer
@@ -1009,6 +1031,10 @@ void commExchange(Comm* c, Matrix* A, CG_FLOAT* x)
   for (int i = 0; i < neighborCount; i++) {
     int count = sendCount[i];
 
+    DEBUG_PRINT(DBG_VINFO, \
+      "rank %i sending %i elems to rank %i\n",\
+      c->rank, count, i);
+
     MPI_Send(sendBuffer,
         count,
         MPI_FLOAT_TYPE,
@@ -1020,6 +1046,23 @@ void commExchange(Comm* c, Matrix* A, CG_FLOAT* x)
   }
 
   MPI_Waitall(neighborCount, request, MPI_STATUSES_IGNORE);
+
+#ifdef VALIDATE
+  if(c->rank == TEST_RANK){
+    int buffer_space = A->nr;
+    for (int i = 0; i < neighborCount; i++) {
+      buffer_space += recvCount[i];
+    }
+
+    printf("rank %i After communication,\nx = [", c->rank);
+    for(int i = 0; i < buffer_space; ++i) {
+      printf("%f, ", x[i]);
+    }
+    printf("]\n");
+  }
+  MPI_Barrier(MPI_COMM_WORLD);
+#endif
+
 #endif
 }
 

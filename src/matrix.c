@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #include "allocate.h"
 #include "matrix.h"
@@ -133,6 +134,35 @@ void matrixGenerate(
   m->nnz      = local_nnz;
 }
 
+bool validateSymmetry(MmMatrix* m){
+  Entry *e = m->entries;
+
+  for (int i = 0; i < m->nnz; i++) {
+    int r1 = e[i].row;
+    int c1 = e[i].col;
+    double v1 = e[i].val;
+
+    if (r1 != c1) { // Ignore diagonal elements
+      bool found = false;
+      for (int j = 0; j < m->nnz; j++) {
+        if (e[j].row == c1 && e[j].col == r1) {
+          if (e[j].val != v1) {
+            // If pattern matches, but numerical does not
+            return false;
+          }
+          found = true;
+          break;
+        }
+      }
+      if (!found) { // If a single pattern doesn't match
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 void matrixRead(MmMatrix* m, char* filename)
 {
   DEBUG_PRINT(DBG_INFO, "matrixRead begin\n");
@@ -230,6 +260,10 @@ void matrixRead(MmMatrix* m, char* filename)
   m->nr    = M;
   m->nnz   = nz;
   m->count = cursor;
+
+#ifdef VALIDATE
+  validate_symmetry(m);
+#endif
 
   // sort by column
   qsort(m->entries, m->count, sizeof(Entry), compareColumn);

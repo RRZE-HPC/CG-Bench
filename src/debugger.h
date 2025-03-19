@@ -2,7 +2,10 @@
 #define __DEBUGGER_H_
 
 #define DBG_INFO 1
-#define DBG_DEV 2
+#define DBG_VINFO 2
+#define DBG_DEV 3
+
+#define TEST_RANK 2
 
 #ifdef DEBUG
 #define DEBUG_PRINT(level, fmt, ...) \
