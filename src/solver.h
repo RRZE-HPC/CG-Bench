@@ -18,17 +18,19 @@ typedef struct {
 
 extern void initSolver(Solver* s, Comm* c, Parameter*);
 extern void solverCheckResidual(Solver* s, Comm* c);
-extern void spMVM(Matrix* m, const CG_FLOAT* restrict x, CG_FLOAT* restrict y);
+extern void spMVM(Matrix* m, const CG_FLOAT* restrict x, CG_FLOAT* restrict y, int rank, int size);
 
 extern void waxpby(const CG_UINT n,
     const CG_FLOAT alpha,
     const CG_FLOAT* restrict x,
     const CG_FLOAT beta,
     const CG_FLOAT* restrict y,
-    double* restrict w);
+    double* restrict w,
+    int rank, int size);
 
 extern void ddot(const CG_UINT n,
     const CG_FLOAT* restrict e,
     const CG_FLOAT* restrict y,
-    CG_FLOAT* restrict result);
+    CG_FLOAT* restrict result,
+    int rank, int size);
 #endif // __SOLVER_H_

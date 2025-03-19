@@ -16,44 +16,6 @@
 #include "util.h"
 #include "debugger.h"
 
-// Fenced print
-void validateCRSMat(Solver* s, Comm* c){
-
-  if (c->rank == 0) printf("After converting to CRS:\n");
-  MPI_Barrier(MPI_COMM_WORLD);
-
-  if (c->rank != 0) {
-    int dummy;
-    MPI_Recv(&dummy, 1, MPI_INT, c->rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-  }
-
-  printf("On rank %i\n", c->rank);
-  printf("rowPtr = [");
-  for(int row = 0; row < s->A.nr + 1; ++row){
-    printf("%i, ", s->A.rowPtr[row]);
-  }
-  printf("]\n");
-  printf("colInd = [");
-  for(int row = 0; row < s->A.nr; ++row){
-    for(int j = s->A.rowPtr[row]; j < s->A.rowPtr[row + 1]; ++j){
-      printf("%i, ", s->A.colInd[j]);
-    }
-  }
-  printf("]\n");
-  printf("val = [");
-  for(int row = 0; row < s->A.nr; ++row){
-    for(int j = s->A.rowPtr[row]; j < s->A.rowPtr[row + 1]; ++j){
-      printf("%f, ", s->A.val[j]);
-    }
-  }
-  printf("]\n");
-
-  if (c->rank != c->size - 1) {
-      int dummy = 0;
-      MPI_Send(&dummy, 1, MPI_INT, c->rank + 1, 0, MPI_COMM_WORLD);
-  }
-}
-
 static void initVectors(Matrix* m, CG_FLOAT* x, CG_FLOAT* b, CG_FLOAT* xexact)
 {
   CG_UINT numRows = m->nr;
@@ -118,16 +80,16 @@ void initSolver(Solver* s, Comm* c, Parameter* p)
     // commMMMatrixDump(c, &mLocal);
     // commAbort("Exit after Distribute");
 
-    
-    localizeColumns(c, &mLocal);
-
-    matrixConvertMMtoCRS(&mLocal, &s->A, c->rank, c->size);
+    CG_UINT *originalColInd = (CG_UINT *)malloc(sizeof(CG_UINT) * mLocal.nnz);
+    localizeColumns(c, &mLocal, originalColInd);
+    matrixConvertMMtoCRS(&mLocal, &s->A, originalColInd, c->rank, c->size);
   }
 
 #ifdef VALIDATE
   // Check that local CRS matrices are as expected
+  if(c->rank == 0) printf("A after initial conversion\n");
   MPI_Barrier(MPI_COMM_WORLD);
-  validateCRSMat(s, c);
+  validateCRSMat(&s->A, c);
   MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
@@ -136,7 +98,7 @@ void initSolver(Solver* s, Comm* c, Parameter* p)
   initVectors(&s->A, s->x, s->b, s->xexact);
 }
 
-void spMVM(Matrix* m, const CG_FLOAT* restrict x, CG_FLOAT* restrict y)
+void spMVM(Matrix* m, const CG_FLOAT* restrict x, CG_FLOAT* restrict y, int rank, int size)
 {
   CG_UINT numRows = m->nr;
   CG_UINT* rowPtr = m->rowPtr;
@@ -150,10 +112,17 @@ void spMVM(Matrix* m, const CG_FLOAT* restrict x, CG_FLOAT* restrict y)
     // loop over all elements in row
     for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
       sum += val[j] * x[colInd[j]];
+#ifdef VALIDATE
+      printf("rank: %i, %f <- %f * %f w/ colInd[%i] = %i\n", rank, sum, val[j], x[colInd[j]], j, colInd[j]);
+#endif
     }
 
     y[i] = sum;
   }
+
+#ifdef VALIDATE
+  validateSpMVM(y, numRows, rank, size);
+#endif
 }
 
 void waxpby(const CG_UINT n,
@@ -161,7 +130,8 @@ void waxpby(const CG_UINT n,
     const CG_FLOAT* restrict x,
     const CG_FLOAT beta,
     const CG_FLOAT* restrict y,
-    CG_FLOAT* const w)
+    CG_FLOAT* const w,
+    int rank, int size)
 {
   if (alpha == 1.0) {
 #pragma omp parallel for schedule(static)
@@ -179,12 +149,17 @@ void waxpby(const CG_UINT n,
       w[i] = alpha * x[i] + beta * y[i];
     }
   }
+
+#ifdef VALIDATE
+  validateWaxpby(w, n, rank, size);
+#endif
 }
 
 void ddot(const CG_UINT n,
     const CG_FLOAT* restrict x,
     const CG_FLOAT* restrict y,
-    CG_FLOAT* restrict result)
+    CG_FLOAT* restrict result,
+    int rank, int size)
 {
   CG_FLOAT sum = 0.0;
 
@@ -202,4 +177,8 @@ void ddot(const CG_UINT n,
 
   commReduction(&sum, SUM);
   *result = sum;
+
+#ifdef VALIDATE
+  validateDdot(sum, rank, size);
+#endif
 }

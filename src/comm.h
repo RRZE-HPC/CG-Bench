@@ -7,6 +7,7 @@
 #include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #if defined(_MPI)
 #include <mpi.h>
 #endif
@@ -37,6 +38,7 @@ typedef struct {
   int rank;
   int size;
 #if defined(_MPI)
+  bool colsLocalized;
   int neighborCount;
   int externalCount;
   int totalSendCount;
@@ -47,7 +49,7 @@ typedef struct {
   CG_FLOAT* sendBuffer;
 #endif
 } Comm;
-void localizeColumns(Comm* c, MmMatrix* mLocal);
+void localizeColumns(Comm* c, MmMatrix* mLocal, CG_UINT* originalColInd);
 
 extern void commInit(Comm* c, int argc, char** argv);
 extern void commFinalize(Comm* c);

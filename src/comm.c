@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #ifdef __linux__
 #include <sys/syscall.h>
@@ -51,24 +52,6 @@ static inline int compareRow(const void* a, const void* b)
 static int sizeOfRank(int rank, int size, int N)
 {
   return N / size + ((N % size > rank) ? 1 : 0);
-}
-
-void validateSubMat(Comm* c, MmMatrix* mLocal){
-  if (c->rank != 0) {
-    int dummy;
-    MPI_Recv(&dummy, 1, MPI_INT, c->rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-  }
-
-  printf("On rank %i, after sending:\nrow:  col:  val:\n", c->rank);
-  Entry* local_e = mLocal->entries;
-  for(int j = 0; j < mLocal->nnz; ++j){
-    printf("%i      %i        %f\n", local_e[j].row, local_e[j].col, local_e[j].val);
-  }
-
-  if (c->rank != c->size - 1) {
-      int dummy = 0;
-      MPI_Send(&dummy, 1, MPI_INT, c->rank + 1, 0, MPI_COMM_WORLD);
-  }
 }
 
 static void probeNeighbors(
@@ -114,6 +97,7 @@ static void buildIndexMapping(Comm* c,
     int* externalRank)
 {
   int externalCount = c->externalCount;
+
   /*Go through the external elements. For each newly encountered external
   point assign it the next index in the local sequence. Then look for other
   external elements who are updated by the same rank and assign them the next
@@ -145,14 +129,17 @@ static void buildIndexMapping(Comm* c,
   CG_UINT* colInd = A->colInd;
   CG_UINT numRows = A->nr;
 
-  for (int i = 0; i < numRows; i++) {
-    for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
-      if (colInd[j] < 0) {
-        int cur_ind = -colInd[j];
-        colInd[j]   = externalLocalIndex[externals[cur_ind]];
+  if(!c->colsLocalized){
+    for (int i = 0; i < numRows; i++) {
+      for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
+        if (colInd[j] < 0) {
+          int cur_ind = -colInd[j];
+          colInd[j]   = externalLocalIndex[externals[cur_ind]];
+        }
       }
     }
   }
+
 
   for (int i = 0; i < externalCount; i++) {
     externalsReordered[externalLocalIndex[i] - numRows] = externalIndex[i];
@@ -708,14 +695,19 @@ int binary_search(int arr[], int size, int target) {
   return 0;  // Element not found
 }
 
-void localizeColumns(Comm* c, MmMatrix* mLocal){
+void localizeColumns(Comm* c, MmMatrix* mLocal, CG_UINT *originalColInd){
   if (commIsMaster(c)) {
     DEBUG_PRINT(DBG_INFO, "localizeColumns begin\n");
   }
 #ifdef _MPI
-  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);  
 
   Entry* e = mLocal->entries;
+
+  // Save original column indices for later
+  for(int i = 0; i < mLocal->nnz; ++i){
+    originalColInd[i] = e[i].col;
+  }
 
   int leftRemoteElemsCount = -1;
   int rightRemoteElemsCount = -1;
@@ -794,7 +786,6 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
 
       DEBUG_PRINT(DBG_DEV, "%i, e[i].col: %i becomes %i\n", i, e[i].col, e[i].col - mLocal->startRow);
       mLocal->entries[i].col -= mLocal->startRow;
-    
     }
 
     // In any case, the column index should never be negative
@@ -819,6 +810,7 @@ void localizeColumns(Comm* c, MmMatrix* mLocal){
   if (commIsMaster(c)) {
     DEBUG_PRINT(DBG_INFO, "localizeColumns complete\n");
   }
+  c->colsLocalized = true;
 }
 
 void commPartition(Comm* c, Matrix* A)
@@ -832,7 +824,7 @@ void commPartition(Comm* c, Matrix* A)
   CG_UINT numRowsTotal = A->totalNr;
   CG_UINT numRows      = A->nr;
   CG_UINT* rowPtr      = A->rowPtr;
-  CG_UINT* colInd      = A->colInd;
+  CG_UINT* colInd = A->colInd;
 
   /***********************************************************************
    *    Step 1: Identify externals and create lookup maps
@@ -850,40 +842,49 @@ void commPartition(Comm* c, Matrix* A)
   int* externalIndex = (int*)allocate(ARRAY_ALIGNMENT,
       MAX_EXTERNAL * sizeof(int));
 
-  for (int i = 0; i < numRows; i++) {
-    for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
-      int cur_ind = A->colInd[j];
-
-#ifdef VERBOSE
-      printf("Rank %d of %d getting entry %d:index %d in local row %d\n",
-          rank,
-          size,
-          j,
-          cur_ind,
-          i);
-#endif
-
-      // convert local column references to local numbering
-      if (startRow <= cur_ind && cur_ind <= stopRow) {
-        colInd[j] -= startRow;
-      } else {
-        // find out if we have already set up this point
-        if (externals[cur_ind] == -1) {
-          externals[cur_ind] = externalCount;
-
-          if (externalCount <= MAX_EXTERNAL) {
-            externalIndex[externalCount] = cur_ind;
-            // mark in local column index as external by negating it
+  if(!c->colsLocalized){
+    for (int i = 0; i < numRows; i++) {
+      for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
+        int cur_ind = A->colInd[j];
+        // convert local column references to local numbering
+          if (startRow <= cur_ind && cur_ind <= stopRow) {
+            colInd[j] -= startRow;
+          } else {
+            // find out if we have already set up this point
+            if (externals[cur_ind] == -1) {
+              externals[cur_ind] = externalCount;
+    
+            if (externalCount <= MAX_EXTERNAL) {
+              externalIndex[externalCount] = cur_ind;
+              // mark in local column index as external by negating it
+              colInd[j] = -colInd[j];
+            } else {
+              printf("Must increase MAX_EXTERNAL\n");
+              MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+              exit(EXIT_FAILURE);
+            }
+            externalCount++;
+          } else {
+            // Mark index as external by adding 1 and negating it
             colInd[j] = -colInd[j];
+          }
+        }
+      }
+    }
+  }
+  else{ // In the case of custom col localization:
+    for (int i = 0; i < numRows; i++) {
+      for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
+        int cur_ind = A->originalColInd[j];
+        if(cur_ind < A->startRow || cur_ind > A->stopRow){
+          if (externalCount <= MAX_EXTERNAL) {
+            // Need this info from original column indices
+            externalIndex[externalCount++] = cur_ind;
           } else {
             printf("Must increase MAX_EXTERNAL\n");
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
             exit(EXIT_FAILURE);
           }
-          externalCount++;
-        } else {
-          // Mark index as external by adding 1 and negating it
-          colInd[j] = -colInd[j];
         }
       }
     }
@@ -985,18 +986,7 @@ void commExchange(Comm* c, Matrix* A, CG_FLOAT* x)
   CG_FLOAT* externals = x + A->nr;
 
 #ifdef VALIDATE
-  if(c->rank == TEST_RANK){
-    int buffer_space = A->nr;
-    for (int i = 0; i < neighborCount; i++) {
-      buffer_space += recvCount[i];
-    }
-
-    printf("rank %i Before communication,\nx = [", c->rank);
-    for(int i = 0; i < buffer_space; ++i) {
-      printf("%f, ", x[i]);
-    }
-    printf("]\n");
-  }
+  validateBeforeComm(c, x, A->nr, neighborCount, recvCount);
 #endif
 
   // Post receives
@@ -1048,19 +1038,7 @@ void commExchange(Comm* c, Matrix* A, CG_FLOAT* x)
   MPI_Waitall(neighborCount, request, MPI_STATUSES_IGNORE);
 
 #ifdef VALIDATE
-  if(c->rank == TEST_RANK){
-    int buffer_space = A->nr;
-    for (int i = 0; i < neighborCount; i++) {
-      buffer_space += recvCount[i];
-    }
-
-    printf("rank %i After communication,\nx = [", c->rank);
-    for(int i = 0; i < buffer_space; ++i) {
-      printf("%f, ", x[i]);
-    }
-    printf("]\n");
-  }
-  MPI_Barrier(MPI_COMM_WORLD);
+  validateAfterComm(c, x, A->nr, neighborCount, recvCount);
 #endif
 
 #endif
@@ -1174,6 +1152,7 @@ void commInit(Comm* c, int argc, char** argv)
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &(c->rank));
   MPI_Comm_size(MPI_COMM_WORLD, &(c->size));
+  c->colsLocalized = false;
 #else
   c->rank = 0;
   c->size = 1;

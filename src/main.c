@@ -15,6 +15,7 @@
 #include "solver.h"
 #include "timing.h"
 #include "util.h"
+#include "debugger.h"
 
 int main(int argc, char** argv)
 {
@@ -40,7 +41,9 @@ int main(int argc, char** argv)
   CG_FLOAT eps = (CG_FLOAT)param.eps;
   int itermax  = param.itermax;
   initSolver(&s, &comm, &param);
+
   profilerInit();
+
   // commMatrixDump(&comm, &s.A);
   // commAbort("After initSolver");
   commPartition(&comm, &s.A);
@@ -63,11 +66,11 @@ int main(int argc, char** argv)
     printFreq = 1;
   }
 
-  PROFILE(WAXPBY, waxpby(nrow, 1.0, s.x, 0.0, s.x, p));
+  PROFILE(WAXPBY, waxpby(nrow, 1.0, s.x, 0.0, s.x, p, comm.rank, comm.size));
   PROFILE(COMM, commExchange(&comm, &s.A, p));
-  PROFILE(SPMVM, spMVM(&s.A, p, Ap));
-  PROFILE(WAXPBY, waxpby(nrow, 1.0, s.b, -1.0, Ap, r));
-  PROFILE(DDOT, ddot(nrow, r, r, &rtrans));
+  PROFILE(SPMVM, spMVM(&s.A, p, Ap, comm.rank, comm.size));
+  PROFILE(WAXPBY, waxpby(nrow, 1.0, s.b, -1.0, Ap, r, comm.rank, comm.size));
+  PROFILE(DDOT, ddot(nrow, r, r, &rtrans, comm.rank, comm.size));
 
   normr = sqrt(rtrans);
   if (commIsMaster(&comm)) {
@@ -78,12 +81,12 @@ int main(int argc, char** argv)
   timeStart = getTimeStamp();
   for (k = 1; k < itermax && normr > eps; k++) {
     if (k == 1) {
-      PROFILE(WAXPBY, waxpby(nrow, 1.0, r, 0.0, r, p));
+      PROFILE(WAXPBY, waxpby(nrow, 1.0, r, 0.0, r, p, comm.rank, comm.size));
     } else {
       oldrtrans = rtrans;
-      PROFILE(DDOT, ddot(nrow, r, r, &rtrans));
+      PROFILE(DDOT, ddot(nrow, r, r, &rtrans, comm.rank, comm.size));
       double beta = rtrans / oldrtrans;
-      PROFILE(WAXPBY, waxpby(nrow, 1.0, r, beta, p, p));
+      PROFILE(WAXPBY, waxpby(nrow, 1.0, r, beta, p, p, comm.rank, comm.size));
     }
     normr = sqrt(rtrans);
 
@@ -92,12 +95,12 @@ int main(int argc, char** argv)
     }
 
     PROFILE(COMM, commExchange(&comm, &s.A, p));
-    PROFILE(SPMVM, spMVM(&s.A, p, Ap));
+    PROFILE(SPMVM, spMVM(&s.A, p, Ap, comm.rank, comm.size));
     double alpha = 0.0;
-    PROFILE(DDOT, ddot(nrow, p, Ap, &alpha));
+    PROFILE(DDOT, ddot(nrow, p, Ap, &alpha, comm.rank, comm.size));
     alpha = rtrans / alpha;
-    PROFILE(WAXPBY, waxpby(nrow, 1.0, s.x, alpha, p, s.x));
-    PROFILE(WAXPBY, waxpby(nrow, 1.0, r, -alpha, Ap, r));
+    PROFILE(WAXPBY, waxpby(nrow, 1.0, s.x, alpha, p, s.x, comm.rank, comm.size));
+    PROFILE(WAXPBY, waxpby(nrow, 1.0, r, -alpha, Ap, r, comm.rank, comm.size));
   }
   timeStop = getTimeStamp();
 

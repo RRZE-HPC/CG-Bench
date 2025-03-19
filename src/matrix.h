@@ -29,12 +29,13 @@ typedef struct {
   CG_UINT totalNr, totalNnz; // number of total rows and non zeros
   CG_UINT startRow, stopRow; // range of rows owned by current rank
   CG_UINT *colInd, *rowPtr;  // colum Indices, row Pointer
+  CG_UINT *originalColInd;
   CG_FLOAT* val;             // matrix entries
 } Matrix;
 
 extern void dumpMMMatrix(MmMatrix* m);
 extern void matrixRead(MmMatrix* m, char* filename);
-extern void matrixConvertMMtoCRS(MmMatrix* mm, Matrix* m, int rank, int size);
+extern void matrixConvertMMtoCRS(MmMatrix* mm, Matrix* m, CG_UINT *originalColInd, int rank, int size);
 extern void matrixGenerate(
     Matrix* m, Parameter* p, int rank, int size, bool use_7pt_stencil);
 
