@@ -7,11 +7,11 @@
 #include <limits.h>
 #include <pthread.h>
 #include <sched.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <stdbool.h>
 
 #ifdef __linux__
 #include <sys/syscall.h>
@@ -129,7 +129,7 @@ static void buildIndexMapping(Comm* c,
   CG_UINT* colInd = A->colInd;
   CG_UINT numRows = A->nr;
 
-  if(!c->colsLocalized){
+  if (!c->colsLocalized) {
     for (int i = 0; i < numRows; i++) {
       for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
         if (colInd[j] < 0) {
@@ -139,7 +139,6 @@ static void buildIndexMapping(Comm* c,
       }
     }
   }
-
 
   for (int i = 0; i < externalCount; i++) {
     externalsReordered[externalLocalIndex[i] - numRows] = externalIndex[i];
@@ -478,25 +477,28 @@ void commPrintBanner(Comm* c)
 }
 
 // NOTE: Matrices are sorted by column
-static void scanMM(
-  MmMatrix* m, int startRow, int stopRow, int* entryCount)
+static void scanMM(MmMatrix* m, int startRow, int stopRow, int* entryCount)
 {
-  Entry* e = m->entries;
+  Entry* e    = m->entries;
   *entryCount = 0;
 
   for (size_t i = 0; i < m->count; i++) {
-    if(e[i].row >= startRow && e[i].row <= stopRow) ++(*entryCount);
+    if (e[i].row >= startRow && e[i].row <= stopRow) ++(*entryCount);
   }
 }
 
 static void packMM(
-  MmMatrix* m, MmMatrix* sub_m, int startRow, int stopRow, int entryCount)
+    MmMatrix* m, MmMatrix* sub_m, int startRow, int stopRow, int entryCount)
 {
-  Entry* e = m->entries;
+  Entry* e     = m->entries;
   int nz_count = 0;
   for (size_t i = 0; i < m->count; i++) {
-    if(e[i].row >= startRow && e[i].row <= stopRow) {
-      DEBUG_PRINT(DBG_DEV, "Collecting %i  %i  %f\n", e[i].row, e[i].col, e[i].val);
+    if (e[i].row >= startRow && e[i].row <= stopRow) {
+      DEBUG_PRINT(DBG_DEV,
+          "Collecting %i  %i  %f\n",
+          e[i].row,
+          e[i].col,
+          e[i].val);
       sub_m->entries[nz_count].col = e[i].col;
       sub_m->entries[nz_count].row = e[i].row;
       sub_m->entries[nz_count].val = e[i].val;
@@ -544,13 +546,13 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   MPI_Type_commit(&entryType);
 
   MPI_Request* send_requests = NULL;
-  MmMatrix *sub_m = NULL;
+  MmMatrix* sub_m            = NULL;
 
-  if (commIsMaster(c)){
+  if (commIsMaster(c)) {
     send_requests = malloc(3 * size * sizeof(MPI_Request));
-    sub_m = (MmMatrix *)malloc(sizeof(MmMatrix) * size);
-  }   
-  
+    sub_m         = (MmMatrix*)malloc(sizeof(MmMatrix) * size);
+  }
+
   int sendcounts[size];
 
   if (commIsMaster(c)) {
@@ -563,26 +565,41 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
       scanMM(m, startRow, stopRow, &sendcounts[i]);
 
       // Allocate submatrices on-root
-      sub_m[i].count = sendcounts[i]; // ?
+      sub_m[i].count    = sendcounts[i]; // ?
       sub_m[i].nr       = stopRow - startRow + 1;
       sub_m[i].nnz      = sendcounts[i];
       sub_m[i].totalNr  = m->totalNr;
       sub_m[i].totalNnz = m->totalNnz;
       sub_m[i].startRow = startRow;
       sub_m[i].stopRow  = stopRow;
-      sub_m[i].entries = (Entry*)allocate(ARRAY_ALIGNMENT, sub_m[i].nnz * sizeof(Entry));
+      sub_m[i].entries  = (Entry*)allocate(ARRAY_ALIGNMENT,
+          sub_m[i].nnz * sizeof(Entry));
 
-      DEBUG_PRINT(DBG_DEV, "before packMM, Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
-      
+      DEBUG_PRINT(DBG_DEV,
+          "before packMM, Rank %d, start %d stop %d nnz %d\n",
+          i,
+          startRow,
+          stopRow,
+          sub_m[i].nnz);
+
       packMM(m, &sub_m[i], startRow, stopRow, sendcounts[i]);
-      
-      DEBUG_PRINT(DBG_DEV, "after packMM, Rank %d, start %d stop %d nnz %d\n", i, startRow, stopRow, sub_m[i].nnz);
+
+      DEBUG_PRINT(DBG_DEV,
+          "after packMM, Rank %d, start %d stop %d nnz %d\n",
+          i,
+          startRow,
+          stopRow,
+          sub_m[i].nnz);
 
 #ifdef DEBUG
-      DEBUG_PRINT(DBG_DEV,"On-root, before sending:\nrow:  col:  val:\n");
+      DEBUG_PRINT(DBG_DEV, "On-root, before sending:\nrow:  col:  val:\n");
       Entry* sub_e = sub_m[i].entries;
-      for(int j = 0; j < sub_m[i].nnz; ++j){
-        DEBUG_PRINT(DBG_DEV, "%i      %i        %f\n", sub_e[j].row, sub_e[j].col, sub_e[j].val);
+      for (int j = 0; j < sub_m[i].nnz; ++j) {
+        DEBUG_PRINT(DBG_DEV,
+            "%i      %i        %f\n",
+            sub_e[j].row,
+            sub_e[j].col,
+            sub_e[j].val);
       }
 #endif
     }
@@ -598,7 +615,8 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
 
   DEBUG_PRINT(DBG_DEV, "rank %i will receive %i entries\n", c->rank, count);
 
-  // The root rank will then fulfill each of these Recv posts, then free allocated
+  // The root rank will then fulfill each of these Recv posts, then free
+  // allocated
   if (commIsMaster(c)) {
     for (int i = 0; i < size; i++) {
       // Sanity check
@@ -607,9 +625,27 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
         MPI_Abort(MPI_COMM_WORLD, 1);
       }
 
-      MPI_Isend(sub_m[i].entries, sub_m[i].nnz, entryType, i, i, MPI_COMM_WORLD, &send_requests[i]);
-      MPI_Isend(&sub_m[i].startRow, 1, MPI_INT, i, size + i, MPI_COMM_WORLD, &send_requests[size + i]);
-      MPI_Isend(&sub_m[i].stopRow, 1, MPI_INT, i, 2*size + i, MPI_COMM_WORLD, &send_requests[2*size + i]);
+      MPI_Isend(sub_m[i].entries,
+          sub_m[i].nnz,
+          entryType,
+          i,
+          i,
+          MPI_COMM_WORLD,
+          &send_requests[i]);
+      MPI_Isend(&sub_m[i].startRow,
+          1,
+          MPI_INT,
+          i,
+          size + i,
+          MPI_COMM_WORLD,
+          &send_requests[size + i]);
+      MPI_Isend(&sub_m[i].stopRow,
+          1,
+          MPI_INT,
+          i,
+          2 * size + i,
+          MPI_COMM_WORLD,
+          &send_requests[2 * size + i]);
     }
   }
 
@@ -619,12 +655,30 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
 
-  MPI_Recv(mLocal->entries, mLocal->count, entryType, 0, c->rank, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
-  MPI_Recv(&mLocal->startRow, 1, MPI_INT, 0, size + c->rank, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
-  MPI_Recv(&mLocal->stopRow, 1, MPI_INT, 0, 2*size + c->rank, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
+  MPI_Recv(mLocal->entries,
+      mLocal->count,
+      entryType,
+      0,
+      c->rank,
+      MPI_COMM_WORLD,
+      MPI_STATUSES_IGNORE);
+  MPI_Recv(&mLocal->startRow,
+      1,
+      MPI_INT,
+      0,
+      size + c->rank,
+      MPI_COMM_WORLD,
+      MPI_STATUSES_IGNORE);
+  MPI_Recv(&mLocal->stopRow,
+      1,
+      MPI_INT,
+      0,
+      2 * size + c->rank,
+      MPI_COMM_WORLD,
+      MPI_STATUSES_IGNORE);
 
   // Allows for root rank to send to itself
-  if (commIsMaster(c)){
+  if (commIsMaster(c)) {
     MPI_Waitall(3 * size, send_requests, MPI_STATUSES_IGNORE);
   }
 
@@ -639,10 +693,11 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   // we cannot simply take first and last element as start and stop row
   // mLocal->startRow = mLocal->entries[0].row;
   // mLocal->stopRow  = mLocal->entries[count - 1].row;
-  mLocal->nr       = mLocal->stopRow - mLocal->startRow + 1;
-  mLocal->nnz      = count;
+  mLocal->nr  = mLocal->stopRow - mLocal->startRow + 1;
+  mLocal->nnz = count;
 
-  DEBUG_PRINT(DBG_DEV, "Rank %d count: %d start %d stop %d\n",
+  DEBUG_PRINT(DBG_DEV,
+      "Rank %d count: %d start %d stop %d\n",
       rank,
       count,
       mLocal->startRow,
@@ -677,59 +732,65 @@ void commDistributeMatrix(Comm* c, MmMatrix* m, MmMatrix* mLocal)
   }
 }
 
-int binary_search(int arr[], int size, int target) {
+int binary_search(int arr[], int size, int target)
+{
   int left = 0, right = size - 1;
 
   while (left <= right) {
-      int mid = left + (right - left) / 2;  // Prevents potential overflow
+    int mid = left + (right - left) / 2; // Prevents potential overflow
 
-      if (arr[mid] == target) {
-          return 1;  // Element found
-      } else if (arr[mid] < target) {
-          left = mid + 1;  // Search in the right half
-      } else {
-          right = mid - 1;  // Search in the left half
-      }
+    if (arr[mid] == target) {
+      return 1; // Element found
+    } else if (arr[mid] < target) {
+      left = mid + 1; // Search in the right half
+    } else {
+      right = mid - 1; // Search in the left half
+    }
   }
 
-  return 0;  // Element not found
+  return 0; // Element not found
 }
 
-void localizeColumns(Comm* c, MmMatrix* mLocal, CG_UINT *originalColInd){
+void localizeColumns(Comm* c, MmMatrix* mLocal, CG_UINT* originalColInd)
+{
   if (commIsMaster(c)) {
     DEBUG_PRINT(DBG_INFO, "localizeColumns begin\n");
   }
 #ifdef _MPI
-  MPI_Barrier(MPI_COMM_WORLD);  
+  MPI_Barrier(MPI_COMM_WORLD);
 
   Entry* e = mLocal->entries;
 
   // Save original column indices for later
-  for(int i = 0; i < mLocal->nnz; ++i){
+  for (int i = 0; i < mLocal->nnz; ++i) {
     originalColInd[i] = e[i].col;
   }
 
-  int leftRemoteElemsCount = -1;
+  int leftRemoteElemsCount  = -1;
   int rightRemoteElemsCount = -1;
 
   // TODO: Probably a better way to do this, too memory hungry
   // Each side needs *up to* half of the total number of columns
-  int *leftSeenCols = (int *)malloc(sizeof(int) * (mLocal->totalNr / 2));
-  int *rightSeenCols = (int *)malloc(sizeof(int) * (mLocal->totalNr / 2));
+  int* leftSeenCols  = (int*)malloc(sizeof(int) * (mLocal->totalNr / 2));
+  int* rightSeenCols = (int*)malloc(sizeof(int) * (mLocal->totalNr / 2));
 
-  for(int i = 0; i < mLocal->totalNr / 2; ++i){
-    leftSeenCols[i] = -1;
+  for (int i = 0; i < mLocal->totalNr / 2; ++i) {
+    leftSeenCols[i]  = -1;
     rightSeenCols[i] = -1;
   }
 
   // Counting phase
-  for(int i = 0; i < mLocal->nnz; ++i){
+  for (int i = 0; i < mLocal->nnz; ++i) {
     int col = e[i].col;
 
     // If entry is left-remote
-    if(col < mLocal->startRow){
-      if (!binary_search(leftSeenCols, leftRemoteElemsCount + 1, col)){
-        DEBUG_PRINT(DBG_DEV, "rank: %i, new left remote column: %i found during counting phase\n", c->rank, col);
+    if (col < mLocal->startRow) {
+      if (!binary_search(leftSeenCols, leftRemoteElemsCount + 1, col)) {
+        DEBUG_PRINT(DBG_DEV,
+            "rank: %i, new left remote column: %i found during counting "
+            "phase\n",
+            c->rank,
+            col);
         leftSeenCols[leftRemoteElemsCount + 1] = col;
         ++leftRemoteElemsCount;
       }
@@ -738,53 +799,78 @@ void localizeColumns(Comm* c, MmMatrix* mLocal, CG_UINT *originalColInd){
 
   // Record offsets for remote elements
   int leftRemoteOffset = leftRemoteElemsCount + 1;
-  int localOffset = mLocal->stopRow - mLocal->startRow + 1;
+  int localOffset      = mLocal->stopRow - mLocal->startRow + 1;
 
   // Reset the "seen" remote colunms
-  for(int i = 0; i < leftRemoteElemsCount; ++i){
+  for (int i = 0; i < leftRemoteElemsCount; ++i) {
     leftSeenCols[i] = -1;
   }
-  for(int i = 0; i < rightRemoteElemsCount; ++i){
+  for (int i = 0; i < rightRemoteElemsCount; ++i) {
     rightSeenCols[i] = -1;
   }
 
   // Reset remoteElemsCounts for assignment phase
-  leftRemoteElemsCount = -1;
+  leftRemoteElemsCount  = -1;
   rightRemoteElemsCount = -1;
-  
+
   // Assignment phase
-  for(int i = 0; i < mLocal->nnz; ++i){
+  for (int i = 0; i < mLocal->nnz; ++i) {
     int col = e[i].col;
 
-    DEBUG_PRINT(DBG_DEV, "e[i].row = %i, e[i].col = %i, e[i].val = %f, mLocal.startRow = %i, mLocal.stopRow = %i\n", e[i].row, e[i].col, e[i].val, mLocal->startRow, mLocal->stopRow);
+    DEBUG_PRINT(DBG_DEV,
+        "e[i].row = %i, e[i].col = %i, e[i].val = %f, mLocal.startRow = %i, "
+        "mLocal.stopRow = %i\n",
+        e[i].row,
+        e[i].col,
+        e[i].val,
+        mLocal->startRow,
+        mLocal->stopRow);
 
-    if(col < mLocal->startRow){ // If entry is left-remote
+    if (col < mLocal->startRow) { // If entry is left-remote
 
-      if (!binary_search(leftSeenCols, leftRemoteElemsCount + 1, col)){
-        DEBUG_PRINT(DBG_DEV, "rank: %i, new left remote column: %i found during assignment phase\n", c->rank, col);
+      if (!binary_search(leftSeenCols, leftRemoteElemsCount + 1, col)) {
+        DEBUG_PRINT(DBG_DEV,
+            "rank: %i, new left remote column: %i found during assignment "
+            "phase\n",
+            c->rank,
+            col);
         leftSeenCols[leftRemoteElemsCount + 1] = col;
         ++leftRemoteElemsCount;
       }
 
       mLocal->entries[i].col = localOffset + leftRemoteElemsCount;
-      DEBUG_PRINT(DBG_DEV, "Left Remote: localOffset = %i, remoteElemsCount = %i\n", localOffset, leftRemoteElemsCount);
-    
-    }
-    else if(col > mLocal->stopRow){ // If entry is "right-remote"
+      DEBUG_PRINT(DBG_DEV,
+          "Left Remote: localOffset = %i, remoteElemsCount = %i\n",
+          localOffset,
+          leftRemoteElemsCount);
 
-      if (!binary_search(rightSeenCols, rightRemoteElemsCount + 1, col)){
-        DEBUG_PRINT(DBG_DEV, "rank: %i, new right remote column: %i found assignment phase\n", c->rank, col);
+    } else if (col > mLocal->stopRow) { // If entry is "right-remote"
+
+      if (!binary_search(rightSeenCols, rightRemoteElemsCount + 1, col)) {
+        DEBUG_PRINT(DBG_DEV,
+            "rank: %i, new right remote column: %i found assignment phase\n",
+            c->rank,
+            col);
         rightSeenCols[rightRemoteElemsCount + 1] = col;
         ++rightRemoteElemsCount;
       }
 
-      mLocal->entries[i].col = localOffset + leftRemoteOffset + rightRemoteElemsCount;
-      DEBUG_PRINT(DBG_DEV, "Right Remote: localOffset = %i, leftRemoteOffset = %i, remoteElemsCount = %i\n", localOffset, leftRemoteOffset, rightRemoteElemsCount);
-    
-    }
-    else{ // If entry is "local"
+      mLocal->entries[i].col = localOffset + leftRemoteOffset +
+                               rightRemoteElemsCount;
+      DEBUG_PRINT(DBG_DEV,
+          "Right Remote: localOffset = %i, leftRemoteOffset = %i, "
+          "remoteElemsCount = %i\n",
+          localOffset,
+          leftRemoteOffset,
+          rightRemoteElemsCount);
 
-      DEBUG_PRINT(DBG_DEV, "%i, e[i].col: %i becomes %i\n", i, e[i].col, e[i].col - mLocal->startRow);
+    } else { // If entry is "local"
+
+      DEBUG_PRINT(DBG_DEV,
+          "%i, e[i].col: %i becomes %i\n",
+          i,
+          e[i].col,
+          e[i].col - mLocal->startRow);
       mLocal->entries[i].col -= mLocal->startRow;
     }
 
@@ -795,12 +881,12 @@ void localizeColumns(Comm* c, MmMatrix* mLocal, CG_UINT *originalColInd){
   // After we compress all column indices, we can sort by row
   // Copied from matrix.c, sort submatrices by row
   qsort(mLocal->entries, mLocal->count, sizeof(Entry), compareRow);
-  #ifdef __linux__
-    qsort(mLocal->entries, mLocal->count, sizeof(Entry), compareRow);
-  #else
-    // BSD has a dedicated mergesort available in its libc
-    mergesort(mLocal->entries, mLocal->count, sizeof(Entry), compareRow);
-  #endif
+#ifdef __linux__
+  qsort(mLocal->entries, mLocal->count, sizeof(Entry), compareRow);
+#else
+  // BSD has a dedicated mergesort available in its libc
+  mergesort(mLocal->entries, mLocal->count, sizeof(Entry), compareRow);
+#endif
 
   free(leftSeenCols);
   free(rightSeenCols);
@@ -824,7 +910,7 @@ void commPartition(Comm* c, Matrix* A)
   CG_UINT numRowsTotal = A->totalNr;
   CG_UINT numRows      = A->nr;
   CG_UINT* rowPtr      = A->rowPtr;
-  CG_UINT* colInd = A->colInd;
+  CG_UINT* colInd      = A->colInd;
 
   /***********************************************************************
    *    Step 1: Identify externals and create lookup maps
@@ -842,18 +928,18 @@ void commPartition(Comm* c, Matrix* A)
   int* externalIndex = (int*)allocate(ARRAY_ALIGNMENT,
       MAX_EXTERNAL * sizeof(int));
 
-  if(!c->colsLocalized){
+  if (!c->colsLocalized) {
     for (int i = 0; i < numRows; i++) {
       for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
         int cur_ind = A->colInd[j];
         // convert local column references to local numbering
-          if (startRow <= cur_ind && cur_ind <= stopRow) {
-            colInd[j] -= startRow;
-          } else {
-            // find out if we have already set up this point
-            if (externals[cur_ind] == -1) {
-              externals[cur_ind] = externalCount;
-    
+        if (startRow <= cur_ind && cur_ind <= stopRow) {
+          colInd[j] -= startRow;
+        } else {
+          // find out if we have already set up this point
+          if (externals[cur_ind] == -1) {
+            externals[cur_ind] = externalCount;
+
             if (externalCount <= MAX_EXTERNAL) {
               externalIndex[externalCount] = cur_ind;
               // mark in local column index as external by negating it
@@ -871,12 +957,11 @@ void commPartition(Comm* c, Matrix* A)
         }
       }
     }
-  }
-  else{ // In the case of custom col localization:
+  } else { // In the case of custom col localization:
     for (int i = 0; i < numRows; i++) {
       for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
         int cur_ind = A->originalColInd[j];
-        if(cur_ind < A->startRow || cur_ind > A->stopRow){
+        if (cur_ind < A->startRow || cur_ind > A->stopRow) {
           if (externalCount <= MAX_EXTERNAL) {
             // Need this info from original column indices
             externalIndex[externalCount++] = cur_ind;
@@ -992,12 +1077,15 @@ void commExchange(Comm* c, Matrix* A, CG_FLOAT* x)
   // Post receives
   int recv_idx = A->nr;
   for (int i = 0; i < neighborCount; i++) {
-    
+
     int count = recvCount[i];
 
-    DEBUG_PRINT(DBG_VINFO, \
-      "rank %i receving %i elems into x[%i] from rank %i\n",\
-      c->rank, count, recv_idx, i);
+    DEBUG_PRINT(DBG_VINFO,
+        "rank %i receving %i elems into x[%i] from rank %i\n",
+        c->rank,
+        count,
+        recv_idx,
+        i);
 
     MPI_Irecv(externals,
         count,
@@ -1021,9 +1109,11 @@ void commExchange(Comm* c, Matrix* A, CG_FLOAT* x)
   for (int i = 0; i < neighborCount; i++) {
     int count = sendCount[i];
 
-    DEBUG_PRINT(DBG_VINFO, \
-      "rank %i sending %i elems to rank %i\n",\
-      c->rank, count, i);
+    DEBUG_PRINT(DBG_VINFO,
+        "rank %i sending %i elems to rank %i\n",
+        c->rank,
+        count,
+        i);
 
     MPI_Send(sendBuffer,
         count,
@@ -1055,7 +1145,7 @@ void commReduction(CG_FLOAT* v, int op)
 #endif
 }
 
-void commPrintConfig(Comm* c)
+void commPrintConfig(Comm* c, int nr, int startRow, int stopRow)
 {
 #ifdef _MPI
   fflush(stdout);
@@ -1066,8 +1156,12 @@ void commPrintConfig(Comm* c)
 
   for (int i = 0; i < c->size; i++) {
     if (i == c->rank) {
-      printf("Rank %d has %d neighbors with %d externals:\n",
+      printf("Rank %d has %d rows (%d to %d) and %d neighbors with %d "
+             "externals:\n",
           c->rank,
+          nr,
+          startRow,
+          stopRow,
           c->neighborCount,
           c->externalCount);
       for (int j = 0; j < c->neighborCount; j++) {
@@ -1076,11 +1170,11 @@ void commPrintConfig(Comm* c)
             c->recvCount[j],
             c->sendCount[j]);
       }
-      printf("\tSend %d elements: [", c->totalSendCount);
-      for (int j = 0; j < c->totalSendCount; j++) {
-        printf("%d, ", c->elementsToSend[j]);
-      }
-      printf("]\n");
+      // printf("\tSend %d elements: [", c->totalSendCount);
+      // for (int j = 0; j < c->totalSendCount; j++) {
+      //   printf("%d\n", c->elementsToSend[j]);
+      // }
+      // printf("]\n");
       fflush(stdout);
     }
     MPI_Barrier(MPI_COMM_WORLD);

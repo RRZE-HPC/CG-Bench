@@ -9,13 +9,13 @@
 
 #include "allocate.h"
 #include "comm.h"
+#include "debugger.h"
 #include "matrix.h"
 #include "parameter.h"
 #include "profiler.h"
 #include "solver.h"
 #include "timing.h"
 #include "util.h"
-#include "debugger.h"
 
 int main(int argc, char** argv)
 {
@@ -47,8 +47,9 @@ int main(int argc, char** argv)
   // commMatrixDump(&comm, &s.A);
   // commAbort("After initSolver");
   commPartition(&comm, &s.A);
-  // commPrintConfig(&comm);
-  // commAbort("After initSolver");
+  commPrintConfig(&comm, s.A.nr, s.A.startRow, s.A.stopRow);
+  // commMatrixDump(&comm, &s.A);
+  // commAbort("After commPartition");
 
   CG_UINT nrow = s.A.nr;
   CG_UINT ncol = s.A.nc;
@@ -99,7 +100,8 @@ int main(int argc, char** argv)
     double alpha = 0.0;
     PROFILE(DDOT, ddot(nrow, p, Ap, &alpha, comm.rank, comm.size));
     alpha = rtrans / alpha;
-    PROFILE(WAXPBY, waxpby(nrow, 1.0, s.x, alpha, p, s.x, comm.rank, comm.size));
+    PROFILE(WAXPBY,
+        waxpby(nrow, 1.0, s.x, alpha, p, s.x, comm.rank, comm.size));
     PROFILE(WAXPBY, waxpby(nrow, 1.0, r, -alpha, Ap, r, comm.rank, comm.size));
   }
   timeStop = getTimeStamp();
